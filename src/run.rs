@@ -1,6 +1,7 @@
 use log::*;
 
 use crate::*;
+use crate::StopReason::Other;
 
 /** Faciliates running rewrites over an [`EGraph`].
 
@@ -349,7 +350,7 @@ where
         self
     }
 
-    pub fn run_check_iteration<'a, R>(mut self, rules: R, start_expression: RecExpr<T>, end_expression: RecExpr<T>) -> Self
+    pub fn run_check_iteration<'a, R>(mut self, rules: R, start_expression: &RecExpr<L>, end_expression: &Pattern<L>) -> Self
         where
             R: IntoIterator<Item = &'a Rewrite<L, N>>,
             L: 'a,
@@ -358,15 +359,23 @@ where
         let rules: Vec<&Rewrite<L, N>> = rules.into_iter().collect();
         check_rules(&rules);
         let start_id = self.egraph.find(*self.roots.last().unwrap());
-        println!("id:{}", start_id);
         self.egraph.rebuild();
         loop {
             let iter = self.run_one(&rules);
             self.iterations.push(iter);
+            let matches = end_expression.search_eclass(&self.egraph, start_id);
+            // println!("{}", matches.is_none());
+
             if let Some(stop_reason) = &self.iterations.last().unwrap().stop_reason {
                 info!("Stopping: {:?}", stop_reason);
                 self.stop_reason = Some(stop_reason.clone());
                 break;
+            }else{
+                if !matches.is_none(){
+                    info!("Stopping: Expressions Matched", );
+                    self.stop_reason = Some(StopReason::Other("Expressions Matched".to_string()));
+                    break;
+                }
             }
         }
 
