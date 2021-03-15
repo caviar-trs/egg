@@ -349,6 +349,31 @@ where
         self
     }
 
+    pub fn run_check_iteration<'a, R>(mut self, rules: R, ) -> Self
+        where
+            R: IntoIterator<Item = &'a Rewrite<L, N>>,
+            L: 'a,
+            N: 'a,
+    {
+        let rules: Vec<&Rewrite<L, N>> = rules.into_iter().collect();
+        check_rules(&rules);
+        self.egraph.rebuild();
+        loop {
+            let iter = self.run_one(&rules);
+            self.iterations.push(iter);
+            if let Some(stop_reason) = &self.iterations.last().unwrap().stop_reason {
+                info!("Stopping: {:?}", stop_reason);
+                self.stop_reason = Some(stop_reason.clone());
+                break;
+            }
+        }
+
+        assert!(!self.iterations.is_empty());
+        assert!(self.stop_reason.is_some());
+        self
+    }
+
+
     #[rustfmt::skip]
     /// Prints some information about a runners run.
     pub fn print_report(&self) {
