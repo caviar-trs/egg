@@ -349,7 +349,7 @@ where
         self
     }
 
-    pub fn run_check_iteration<'a, R>(mut self, rules: R, ) -> Self
+    pub fn run_check_iteration<'a, R>(mut self, rules: R, start_expression: RecExpr<T>, end_expression: RecExpr<T>) -> Self
         where
             R: IntoIterator<Item = &'a Rewrite<L, N>>,
             L: 'a,
@@ -357,6 +357,8 @@ where
     {
         let rules: Vec<&Rewrite<L, N>> = rules.into_iter().collect();
         check_rules(&rules);
+        let start_id = self.egraph.find(*self.roots.last().unwrap());
+        println!("id:{}", start_id);
         self.egraph.rebuild();
         loop {
             let iter = self.run_one(&rules);
