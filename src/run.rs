@@ -349,6 +349,10 @@ impl<L, N, IterData> Runner<L, N, IterData>
         self
     }
 
+    /// Run this `Runner` until it stops while checking equivalence with goals at iteration level.
+    /// After this, the field
+    /// [`stop_reason`](Runner::stop_reason) is guaranteed to be
+    /// set.
     pub fn run_check_iteration<'a, R>(mut self, rules: R, goals: &[Pattern<L>]) -> Self
         where
             R: IntoIterator<Item=&'a Rewrite<L, N>>,
