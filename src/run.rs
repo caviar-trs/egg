@@ -159,9 +159,9 @@ pub struct Runner<L: Language, N: Analysis<L>, IterData = ()> {
 }
 
 impl<L, N> Default for Runner<L, N, ()>
-    where
-        L: Language,
-        N: Analysis<L> + Default,
+where
+    L: Language,
+    N: Analysis<L> + Default,
 {
     fn default() -> Self {
         Runner::new(N::default())
@@ -228,10 +228,10 @@ pub struct Iteration<IterData> {
 type RunnerResult<T> = std::result::Result<T, StopReason>;
 
 impl<L, N, IterData> Runner<L, N, IterData>
-    where
-        L: Language,
-        N: Analysis<L>,
-        IterData: IterationData<L, N>,
+where
+    L: Language,
+    N: Analysis<L>,
+    IterData: IterationData<L, N>,
 {
     /// Create a new `Runner` with the given analysis and default parameters.
     pub fn new(analysis: N) -> Self {
@@ -290,8 +290,8 @@ impl<L, N, IterData> Runner<L, N, IterData>
     ///     .run(rules);
     /// ```
     pub fn with_hook<F>(mut self, hook: F) -> Self
-        where
-            F: FnMut(&mut Self) -> Result<(), String> + 'static,
+    where
+        F: FnMut(&mut Self) -> Result<(), String> + 'static,
     {
         self.hooks.push(Box::new(hook));
         self
@@ -326,10 +326,10 @@ impl<L, N, IterData> Runner<L, N, IterData>
     /// [`stop_reason`](Runner::stop_reason) is guaranteed to be
     /// set.
     pub fn run<'a, R>(mut self, rules: R) -> Self
-        where
-            R: IntoIterator<Item=&'a Rewrite<L, N>>,
-            L: 'a,
-            N: 'a,
+    where
+        R: IntoIterator<Item = &'a Rewrite<L, N>>,
+        L: 'a,
+        N: 'a,
     {
         let rules: Vec<&Rewrite<L, N>> = rules.into_iter().collect();
         check_rules(&rules);
@@ -354,12 +354,11 @@ impl<L, N, IterData> Runner<L, N, IterData>
     /// [`stop_reason`](Runner::stop_reason) is guaranteed to be
     /// set.
     pub fn run_check_iteration<'a, R>(mut self, rules: R, goals: &[Pattern<L>]) -> Self
-        where
-            R: IntoIterator<Item=&'a Rewrite<L, N>>,
-            L: 'a,
-            N: 'a,
+    where
+        R: IntoIterator<Item = &'a Rewrite<L, N>>,
+        L: 'a,
+        N: 'a,
     {
-
         let rules: Vec<&Rewrite<L, N>> = rules.into_iter().collect();
         check_rules(&rules);
         let start_id = self.egraph.find(*self.roots.last().unwrap());
@@ -384,8 +383,69 @@ impl<L, N, IterData> Runner<L, N, IterData>
                 break;
             } else {
                 if proved_goal {
-                    info!("Stopping goal {} matched",goals[proved_goal_index].to_string());
-                    self.stop_reason = Some(StopReason::Other(format!("Goal {} Matched", goals[proved_goal_index]).to_string()));
+                    info!(
+                        "Stopping goal {} matched",
+                        goals[proved_goal_index].to_string()
+                    );
+                    self.stop_reason = Some(StopReason::Other(
+                        format!("Goal {} Matched", goals[proved_goal_index]).to_string(),
+                    ));
+                    break;
+                }
+            }
+        }
+
+        assert!(!self.iterations.is_empty());
+        assert!(self.stop_reason.is_some());
+        self
+    }
+
+    /// Run this `Runner` until it stops while checking equivalence with goals at iteration level.
+    /// After this, the field
+    /// [`stop_reason`](Runner::stop_reason) is guaranteed to be
+    /// set.
+    pub fn run_check_iteration_id<'a, R>(
+        mut self,
+        rules: R,
+        goals: &[Pattern<L>],
+        start_id: Id,
+    ) -> Self
+    where
+        R: IntoIterator<Item = &'a Rewrite<L, N>>,
+        L: 'a,
+        N: 'a,
+    {
+        let rules: Vec<&Rewrite<L, N>> = rules.into_iter().collect();
+        check_rules(&rules);
+        // let start_id = self.egraph.find(*self.roots.last().unwrap());
+        let mut proved_goal = false;
+        let mut proved_goal_index = 0;
+        self.egraph.rebuild();
+        loop {
+            let iter = self.run_one(&rules);
+            self.iterations.push(iter);
+
+            for (goal_index, goal) in goals.iter().enumerate() {
+                if !(goal.search_eclass(&self.egraph, start_id)).is_none() {
+                    proved_goal = true;
+                    proved_goal_index = goal_index;
+                    break;
+                }
+            }
+
+            if let Some(stop_reason) = &self.iterations.last().unwrap().stop_reason {
+                info!("Stopping: {:?}", stop_reason);
+                self.stop_reason = Some(stop_reason.clone());
+                break;
+            } else {
+                if proved_goal {
+                    info!(
+                        "Stopping goal {} matched",
+                        goals[proved_goal_index].to_string()
+                    );
+                    self.stop_reason = Some(StopReason::Other(
+                        format!("Goal {} Matched", goals[proved_goal_index]).to_string(),
+                    ));
                     break;
                 }
             }
@@ -571,9 +631,9 @@ the [`EGraph`] and dominating how much time is spent while running the
 */
 #[allow(unused_variables)]
 pub trait RewriteScheduler<L, N>
-    where
-        L: Language,
-        N: Analysis<L>,
+where
+    L: Language,
+    N: Analysis<L>,
 {
     /// Whether or not the [`Runner`] is allowed
     /// to say it has saturated.
@@ -629,10 +689,11 @@ pub trait RewriteScheduler<L, N>
 pub struct SimpleScheduler;
 
 impl<L, N> RewriteScheduler<L, N> for SimpleScheduler
-    where
-        L: Language,
-        N: Analysis<L>,
-{}
+where
+    L: Language,
+    N: Analysis<L>,
+{
+}
 
 /// A [`RewriteScheduler`] that implements exponentional rule backoff.
 ///
@@ -719,9 +780,9 @@ impl Default for BackoffScheduler {
 }
 
 impl<L, N> RewriteScheduler<L, N> for BackoffScheduler
-    where
-        L: Language,
-        N: Analysis<L>,
+where
+    L: Language,
+    N: Analysis<L>,
 {
     fn can_stop(&mut self, iteration: usize) -> bool {
         let n_stats = self.stats.len();
@@ -819,9 +880,9 @@ impl<L, N> RewriteScheduler<L, N> for BackoffScheduler
 /// [`Iteration`]s, but by default it uses `()`.
 ///
 pub trait IterationData<L, N>: Sized
-    where
-        L: Language,
-        N: Analysis<L>,
+where
+    L: Language,
+    N: Analysis<L>,
 {
     /// Given the current [`Runner`], make the
     /// data to be put in this [`Iteration`].
@@ -829,9 +890,9 @@ pub trait IterationData<L, N>: Sized
 }
 
 impl<L, N> IterationData<L, N> for ()
-    where
-        L: Language,
-        N: Analysis<L>,
+where
+    L: Language,
+    N: Analysis<L>,
 {
     fn make(_: &Runner<L, N, Self>) -> Self {}
 }
