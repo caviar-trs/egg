@@ -456,6 +456,98 @@ where
         self
     }
 
+    /// Run this `Runner` until it stops while checking equivalence with goals at iteration level and cecking for impossible expressions.
+    /// After this, the field
+    /// [`stop_reason`](Runner::stop_reason) is guaranteed to be
+    /// set.
+    pub fn run_fast<'a, R>(
+        mut self,
+        rules: R,
+        goals: &[Pattern<L>],
+        start_id: Id,
+        impossibles: &[(Pattern<L>, impl Fn(&EGraph<L, N>, &Subst) -> bool)],
+    ) -> (Self, f64)
+    where
+        R: IntoIterator<Item = &'a Rewrite<L, N>>,
+        L: 'a,
+        N: 'a,
+    {
+        let rules: Vec<&Rewrite<L, N>> = rules.into_iter().collect();
+        check_rules(&rules);
+        // let start_id = self.egraph.find(*self.roots.last().unwrap());
+        let mut proved_goal = false;
+        let mut proved_goal_index = 0;
+
+        let mut proved_impo = false;
+        let mut proved_impo_index = 0;
+        let mut extraction_time = 0.0;
+
+        self.egraph.rebuild();
+        loop {
+            let iter = self.run_one(&rules);
+            self.iterations.push(iter);
+
+            for (goal_index, goal) in goals.iter().enumerate() {
+                if !(goal.search_eclass(&self.egraph, start_id)).is_none() {
+                    proved_goal = true;
+                    proved_goal_index = goal_index;
+                    break;
+                }
+            }
+
+            let now = Instant::now();
+            for (impo_index, impo) in impossibles.iter().enumerate() {
+                let results = match impo.0.search_eclass(&self.egraph, start_id) {
+                    Option::Some(res) => res,
+                    _ => continue,
+                };
+                if results
+                    .substs
+                    .iter()
+                    .any(|subst| (impo.1)(&self.egraph, subst))
+                {
+                    proved_impo = true;
+                    proved_impo_index = impo_index;
+                    break;
+                }
+            }
+            extraction_time += now.elapsed().as_secs_f64();
+            if let Some(stop_reason) = &self.iterations.last().unwrap().stop_reason {
+                info!("Stopping: {:?}", stop_reason);
+                self.stop_reason = Some(stop_reason.clone());
+                break;
+            } else {
+                if proved_goal {
+                    info!(
+                        "Stopping goal {} matched",
+                        goals[proved_goal_index].to_string()
+                    );
+                    self.stop_reason = Some(StopReason::Other(
+                        format!("Goal {} Matched", goals[proved_goal_index]).to_string(),
+                    ));
+                    break;
+                }
+                if proved_impo {
+                    info!(
+                        "Stopping impossible {} matched",
+                        impossibles[proved_impo_index].0.to_string()
+                    );
+                    self.stop_reason = Some(StopReason::Other(
+                        format!(
+                            "Impossible {} Matched",
+                            impossibles[proved_impo_index].0.to_string()
+                        )
+                        .to_string(),
+                    ));
+                    break;
+                }
+            }
+        }
+
+        assert!(!self.iterations.is_empty());
+        assert!(self.stop_reason.is_some());
+        (self, extraction_time)
+    }
 
     #[rustfmt::skip]
     /// Prints some information about a runners run.
