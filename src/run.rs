@@ -456,7 +456,7 @@ where
         self
     }
 
-    /// Run this `Runner` until it stops while checking equivalence with goals and impossbiles at iteration level to terminate fast.
+    /// Run this `Runner` until it stops while checking equivalence with goals and impossbile patterns at iteration level to terminate fast.
     /// After this, the field
     /// [`stop_reason`](Runner::stop_reason) is guaranteed to be
     /// set.
