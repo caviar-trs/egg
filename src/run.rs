@@ -456,7 +456,7 @@ where
         self
     }
 
-    /// Run this `Runner` until it stops while checking equivalence with goals at iteration level and cecking for impossible expressions.
+    /// Run this `Runner` until it stops while checking equivalence with goals and impossbiles at iteration level to terminate fast.
     /// After this, the field
     /// [`stop_reason`](Runner::stop_reason) is guaranteed to be
     /// set.
@@ -464,8 +464,7 @@ where
         mut self,
         rules: R,
         goals: &[Pattern<L>],
-        start_id: Id,
-        impossibles: &[(Pattern<L>, impl Fn(&EGraph<L, N>, &Subst) -> bool)],
+        check_impo: fn(&EGraph<L, N>, Id) -> (bool, String),
     ) -> (Self, f64)
     where
         R: IntoIterator<Item = &'a Rewrite<L, N>>,
@@ -474,19 +473,16 @@ where
     {
         let rules: Vec<&Rewrite<L, N>> = rules.into_iter().collect();
         check_rules(&rules);
-        // let start_id = self.egraph.find(*self.roots.last().unwrap());
+        let start_id = self.egraph.find(*self.roots.last().unwrap());
         let mut proved_goal = false;
         let mut proved_goal_index = 0;
-
-        let mut proved_impo = false;
-        let mut proved_impo_index = 0;
-        let mut extraction_time = 0.0;
-
+        let mut impo_time = 0.0;
         self.egraph.rebuild();
         loop {
             let iter = self.run_one(&rules);
             self.iterations.push(iter);
 
+            // Checking goals
             for (goal_index, goal) in goals.iter().enumerate() {
                 if !(goal.search_eclass(&self.egraph, start_id)).is_none() {
                     proved_goal = true;
@@ -495,28 +491,17 @@ where
                 }
             }
 
+            // Checking impossibles
             let now = Instant::now();
-            for (impo_index, impo) in impossibles.iter().enumerate() {
-                let results = match impo.0.search_eclass(&self.egraph, start_id) {
-                    Option::Some(res) => res,
-                    _ => continue,
-                };
-                if results
-                    .substs
-                    .iter()
-                    .any(|subst| (impo.1)(&self.egraph, subst))
-                {
-                    proved_impo = true;
-                    proved_impo_index = impo_index;
-                    break;
-                }
-            }
-            extraction_time += now.elapsed().as_secs_f64();
+            let (proved_impo, impo_proved) = check_impo(&self.egraph, start_id);
+            impo_time += now.elapsed().as_secs_f64();
+
             if let Some(stop_reason) = &self.iterations.last().unwrap().stop_reason {
                 info!("Stopping: {:?}", stop_reason);
                 self.stop_reason = Some(stop_reason.clone());
                 break;
             } else {
+                // Break if goal matched
                 if proved_goal {
                     info!(
                         "Stopping goal {} matched",
@@ -527,17 +512,11 @@ where
                     ));
                     break;
                 }
+                // Break if impossible matched
                 if proved_impo {
-                    info!(
-                        "Stopping impossible {} matched",
-                        impossibles[proved_impo_index].0.to_string()
-                    );
+                    info!("Stopping impossible {} matched", impo_proved);
                     self.stop_reason = Some(StopReason::Other(
-                        format!(
-                            "Impossible {} Matched",
-                            impossibles[proved_impo_index].0.to_string()
-                        )
-                        .to_string(),
+                        format!("Impossible {} Matched", impo_proved).to_string(),
                     ));
                     break;
                 }
@@ -546,7 +525,7 @@ where
 
         assert!(!self.iterations.is_empty());
         assert!(self.stop_reason.is_some());
-        (self, extraction_time)
+        (self, impo_time)
     }
 
     #[rustfmt::skip]
