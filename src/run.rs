@@ -456,6 +456,10 @@ where
         self
     }
 
+    // pub fn checking_patterns(k: i64) -> bool {
+        
+    // }
+
     /// Run this `Runner` until it stops while checking equivalence with goals and impossbile patterns at iteration level to terminate fast.
     /// After this, the field
     /// [`stop_reason`](Runner::stop_reason) is guaranteed to be
@@ -521,6 +525,92 @@ where
                     break;
                 }
             }
+        }
+
+        assert!(!self.iterations.is_empty());
+        assert!(self.stop_reason.is_some());
+        (self, impo_time)
+    }
+
+    /// Run this `Runner` until it stops while checking equivalence with goals and impossbile patterns at iteration level to terminate fast.
+    /// After this, the field
+    /// [`stop_reason`](Runner::stop_reason) is guaranteed to be
+    /// set.
+    pub fn run_faster<'a, R>(
+        mut self,
+        rules: R,
+        goals: &[Pattern<L>],
+        check_impo: fn(&EGraph<L, N>, Id) -> (bool, String),
+    ) -> (Self, f64)
+    where
+        R: IntoIterator<Item = &'a Rewrite<L, N>>,
+        L: 'a,
+        N: 'a,
+    {
+        let rules: Vec<&Rewrite<L, N>> = rules.into_iter().collect();
+        check_rules(&rules);
+        let start_id = self.egraph.find(*self.roots.last().unwrap());
+        let mut proved_goal = false;
+        let mut proved_goal_index = 0;
+        let mut impo_time = 0.0;
+        let mut index: i64 = 0;
+        let mut check: bool;
+        let mut result: (bool, String);
+        self.egraph.rebuild();
+        loop {
+            let iter = self.run_one(&rules);
+            self.iterations.push(iter);
+
+            // Checking goals
+            for (goal_index, goal) in goals.iter().enumerate() {
+                if !(goal.search_eclass(&self.egraph, start_id)).is_none() {
+                    proved_goal = true;
+                    proved_goal_index = goal_index;
+                    break;
+                }
+            }
+
+            // Checking impossibles
+            check  = match index{
+                0 | 1 | 2 => true,
+                3..=10 => index % 2 == 0,
+                11..=100 => index % 10 == 0,
+                _ => index % 100 == 0
+            };
+            if check{
+                let now = Instant::now();
+                result = check_impo(&self.egraph, start_id);
+                impo_time += now.elapsed().as_secs_f64();
+            } else {
+                result = (false, "".to_string());
+            }
+
+            if let Some(stop_reason) = &self.iterations.last().unwrap().stop_reason {
+                info!("Stopping: {:?}", stop_reason);
+                self.stop_reason = Some(stop_reason.clone());
+                break;
+            } else {
+                // Break if goal matched
+                if proved_goal {
+                    info!(
+                        "Stopping goal {} matched",
+                        goals[proved_goal_index].to_string()
+                    );
+                    self.stop_reason = Some(StopReason::Other(
+                        format!("Goal {} Matched", goals[proved_goal_index]).to_string(),
+                    ));
+                    break;
+                }
+                // Break if impossible matched
+                if result.0 {
+                    info!("Stopping impossible {} matched", result.1);
+                    self.stop_reason = Some(StopReason::Other(
+                        format!("Impossible {} Matched", result.1).to_string(),
+                    ));
+                    break;
+                }
+            }
+            index += 1;
         }
 
         assert!(!self.iterations.is_empty());
