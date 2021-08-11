@@ -1,4 +1,5 @@
 use log::*;
+use rand::Rng;
 
 use crate::*;
 
@@ -528,6 +529,57 @@ where
         (self, impo_time)
     }
 
+    /// Run this `Runner` until it stops while checking equivalence with goals at iteration level while applying rules with probability.
+    /// After this, the field
+    /// [`stop_reason`](Runner::stop_reason) is guaranteed to be
+    /// set.
+    pub fn run_prob<'a, R>(mut self, rules: R, goals: &[Pattern<L>], apply_probability: f64) -> Self
+    where
+        R: IntoIterator<Item = &'a Rewrite<L, N>>,
+        L: 'a,
+        N: 'a,
+    {
+        let rules: Vec<&Rewrite<L, N>> = rules.into_iter().collect();
+        check_rules(&rules);
+        let start_id = self.egraph.find(*self.roots.last().unwrap());
+        let mut proved_goal = false;
+        let mut proved_goal_index = 0;
+        self.egraph.rebuild();
+        loop {
+            let iter = self.run_one_rand(&rules, apply_probability);
+            self.iterations.push(iter);
+
+            for (goal_index, goal) in goals.iter().enumerate() {
+                if !(goal.search_eclass(&self.egraph, start_id)).is_none() {
+                    proved_goal = true;
+                    proved_goal_index = goal_index;
+                    break;
+                }
+            }
+
+            if let Some(stop_reason) = &self.iterations.last().unwrap().stop_reason {
+                info!("Stopping: {:?}", stop_reason);
+                self.stop_reason = Some(stop_reason.clone());
+                break;
+            } else {
+                if proved_goal {
+                    info!(
+                        "Stopping goal {} matched",
+                        goals[proved_goal_index].to_string()
+                    );
+                    self.stop_reason = Some(StopReason::Other(
+                        format!("Goal {} Matched", goals[proved_goal_index]).to_string(),
+                    ));
+                    break;
+                }
+            }
+        }
+
+        assert!(!self.iterations.is_empty());
+        assert!(self.stop_reason.is_some());
+        self
+    }
+
     #[rustfmt::skip]
     /// Prints some information about a runners run.
     pub fn print_report(&self) {
@@ -609,6 +661,119 @@ where
                         applied.insert(rw.name().to_owned(), actually_matched);
                     }
                     debug!("Applied {} {} times", rw.name(), actually_matched);
+                }
+                self.check_limits()
+            })
+        });
+
+        let apply_time = apply_time.elapsed().as_secs_f64();
+        info!("Apply time: {}", apply_time);
+
+        let rebuild_time = Instant::now();
+        let n_rebuilds = self.egraph.rebuild();
+
+        let rebuild_time = rebuild_time.elapsed().as_secs_f64();
+        info!("Rebuild time: {}", rebuild_time);
+        info!(
+            "Size: n={}, e={}",
+            self.egraph.total_size(),
+            self.egraph.number_of_classes()
+        );
+
+        let can_be_saturated = applied.is_empty()
+            && self.scheduler.can_stop(i)
+            && (egraph_nodes == egraph_nodes_after_hooks)
+            && (egraph_classes == egraph_classes_after_hooks);
+
+        if can_be_saturated {
+            result = result.and(Err(StopReason::Saturated))
+        }
+
+        Iteration {
+            applied,
+            egraph_nodes,
+            egraph_classes,
+            hook_time,
+            search_time,
+            apply_time,
+            rebuild_time,
+            n_rebuilds,
+            data: IterData::make(&self),
+            total_time: start_time.elapsed().as_secs_f64(),
+            stop_reason: result.err(),
+        }
+    }
+
+    fn run_one_rand(
+        &mut self,
+        rules: &[&Rewrite<L, N>],
+        apply_probability: f64,
+    ) -> Iteration<IterData> {
+        assert!(self.stop_reason.is_none());
+
+        info!("\nIteration {}", self.iterations.len());
+
+        //Initialize randomizer
+        let mut rng = rand::thread_rng();
+
+        self.try_start();
+        let mut result = self.check_limits();
+
+        let egraph_nodes = self.egraph.total_size();
+        let egraph_classes = self.egraph.number_of_classes();
+
+        let hook_time = Instant::now();
+        let mut hooks = std::mem::take(&mut self.hooks);
+        result = result.and_then(|_| {
+            hooks
+                .iter_mut()
+                .try_for_each(|hook| hook(self).map_err(StopReason::Other))
+        });
+        self.hooks = hooks;
+        let hook_time = hook_time.elapsed().as_secs_f64();
+
+        let egraph_nodes_after_hooks = self.egraph.total_size();
+        let egraph_classes_after_hooks = self.egraph.number_of_classes();
+
+        let i = self.iterations.len();
+        trace!("EGraph {:?}", self.egraph.dump());
+
+        let start_time = Instant::now();
+
+        let mut matches = Vec::new();
+        result = result.and_then(|_| {
+            rules.iter().try_for_each(|rule| {
+                let ms = self.scheduler.search_rewrite(i, &self.egraph, rule);
+                matches.push(ms);
+                self.check_limits()
+            })
+        });
+
+        let search_time = start_time.elapsed().as_secs_f64();
+        info!("Search time: {}", search_time);
+
+        let apply_time = Instant::now();
+        let mut applied = IndexMap::default();
+        result = result.and_then(|_| {
+            rules.iter().zip(matches).try_for_each(|(rw, ms)| {
+                // Only apply the rule if the probability is high enough
+                let apply_it = rng.gen_range(0.0..1.0);
+                if apply_it < apply_probability {
+                    let total_matches: usize = ms.iter().map(|m| m.substs.len()).sum();
+                    debug!("Applying {} {} times", rw.name(), total_matches);
+
+                    let actually_matched =
+                        self.scheduler.apply_rewrite(i, &mut self.egraph, rw, ms);
+                    if actually_matched > 0 {
+                        if let Some(count) = applied.get_mut(rw.name()) {
+                            *count += actually_matched;
+                        } else {
+                            applied.insert(rw.name().to_owned(), actually_matched);
+                        }
+                        debug!("Applied {} {} times", rw.name(), actually_matched);
+                    }
+                } else {
+                    debug!("Did Not Apply {}", rw.name());
                 }
                 self.check_limits()
             })
